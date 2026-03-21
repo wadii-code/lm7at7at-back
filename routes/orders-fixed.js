@@ -6,28 +6,12 @@ module.exports = function(supabase) {
 
   // POST a new order (allow guest checkout with stock validation)
   router.post('/', async (req, res) => {
-  const { customer, items, total, status } = req.body;
+    const { customer, items, total, status } = req.body;
 
     console.log('Order POST received:', JSON.stringify(req.body, null, 2));
 
     try {
-      // Validate stock for each item (demo tolerant)
-      const stockIssues = [];
-      for (const item of items) {
-        const { data: product, error } = await supabase
-          .from('products')
-          .select('stock_quantity')
-          .eq('id', item.id)
-          .single();
-        if (error || !product) {
-          console.log(`Product not found for stock check: ${item.id}`);
-          stockIssues.push(item.id);
-        } else if (product.stock_quantity < item.quantity) {
-          stockIssues.push(item.id);
-        }
-      }
-
-      // Create order
+      // Create order first (always succeed)
       const { data, error: orderError } = await supabase
         .from('orders')
         .insert({
@@ -45,16 +29,31 @@ module.exports = function(supabase) {
 
       if (orderError) throw orderError;
 
-      if (stockIssues.length > 0) {
-        console.log('Stock issues (skipping decrement):', stockIssues);
-      } else {
-        // Stock OK, decrement
-        for (const item of items) {
-          await supabase
+      // Optional stock validation & decrement (demo tolerant)
+      const stockIssues = [];
+      for (const item of items) {
+        try {
+          const { data: product } = await supabase
             .from('products')
-            .update({ stock_quantity: supabase.rpc('decrement_stock', { x: item.quantity, row_id: item.id }) })
-            .eq('id', item.id);
+            .select('stock_quantity')
+            .eq('id', item.id)
+            .single();
+          if (product && product.stock_quantity >= item.quantity) {
+            await supabase
+              .from('products')
+              .update({ stock_quantity: supabase.raw('stock_quantity - ?', [item.quantity]) })
+              .eq('id', item.id);
+          } else {
+            stockIssues.push(item.id);
+          }
+        } catch (stockErr) {
+          console.log(`Stock update skipped for ${item.id}:`, stockErr.message);
+          stockIssues.push(item.id);
         }
+      }
+
+      if (stockIssues.length > 0) {
+        console.log('Stock updates skipped:', stockIssues);
       }
 
       res.status(201).json(data);
@@ -69,7 +68,7 @@ module.exports = function(supabase) {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('*') // Correctly select the items JSONB column
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -112,7 +111,6 @@ module.exports = function(supabase) {
     const { id } = req.params;
 
     try {
-      // This is the correct logic, as there is no separate order_items table being used.
       const { error } = await supabase.from('orders').delete().eq('id', id);
 
       if (error) throw error;
@@ -126,3 +124,4 @@ module.exports = function(supabase) {
 
   return router;
 };
+

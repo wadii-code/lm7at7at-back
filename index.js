@@ -23,7 +23,7 @@ const productRoutes = require('./routes/products')(supabase);
 const collectionRoutes = require('./routes/collections')(supabase);
 const authRoutes = require('./routes/auth')(supabase);
 const reviewRoutes = require('./routes/reviews')(supabase);
-const orderRoutes = require('./routes/orders')(supabase);
+const orderRoutes = require('./routes/orders-fixed')(supabase);
 
 app.use('/api/products', productRoutes);
 app.use('/api/collections', collectionRoutes);
