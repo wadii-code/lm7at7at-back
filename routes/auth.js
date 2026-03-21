@@ -2,24 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
-
-// Middleware to verify JWT
-const authMiddleware = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Unauthorized: No token provided' });
-  }
-  
-  const token = authHeader.split(' ')[1];
-  
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ message: 'Unauthorized: Invalid token' });
-  }
-};
+const { authenticateToken } = require('../middleware/auth');
 
 
 module.exports = (supabase) => {
@@ -65,7 +48,7 @@ module.exports = (supabase) => {
           id: newUser.id,
           name: newUser.name,
           email: newUser.email,
-          isAdmin: newUser.is_admin,
+          is_admin: newUser.is_admin,
         },
       });
 
@@ -104,7 +87,7 @@ module.exports = (supabase) => {
       }
 
       const token = jwt.sign(
-        { id: user.id, isAdmin: user.is_admin },
+        { id: user.id, is_admin: user.is_admin },
         process.env.JWT_SECRET,
         { expiresIn: '1d' }
       );
@@ -115,7 +98,7 @@ module.exports = (supabase) => {
           id: user.id,
           name: user.name,
           email: user.email,
-          isAdmin: user.is_admin,
+          is_admin: user.is_admin,
         },
       });
 
@@ -126,7 +109,7 @@ module.exports = (supabase) => {
   });
     
   // Get current user profile
-  router.get('/me', authMiddleware, async (req, res) => {
+  router.get('/me', authenticateToken, async (req, res) => {
     try {
       const { data: user, error } = await supabase
         .from('users')
@@ -142,7 +125,7 @@ module.exports = (supabase) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        isAdmin: user.is_admin,
+        is_admin: user.is_admin,
       });
     } catch (error) {
       res.status(500).json({ message: 'Server error' });
@@ -150,7 +133,7 @@ module.exports = (supabase) => {
   });
 
   // Update user profile
-  router.put('/profile', authMiddleware, async (req, res) => {
+  router.put('/profile', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const { name, oldPassword, newPassword } = req.body;
 

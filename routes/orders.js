@@ -1,53 +1,114 @@
 const express = require('express');
-const router = express.Router();
+const { authenticateToken, isAdmin } = require('../middleware/auth');
 
-module.exports = (supabase) => {
-  // Fetch all orders
-  router.get('/', async (req, res) => {
-    const { data, error } = await supabase.from('orders').select('*');
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  });
+module.exports = function(supabase) {
+  const router = express.Router();
 
-  // Add a new order
+  // POST a new order (allow guest checkout with stock validation)
   router.post('/', async (req, res) => {
-    const { error } = await supabase.from('orders').insert([req.body]);
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ message: 'Order created' });
+    const { customer, items, total, status } = req.body;
+
+    try {
+      // Validate stock for each item
+      const stockChecks = items.map(async (item) => {
+        const { data: product, error } = await supabase
+          .from('products')
+          .select('stock_quantity')
+          .eq('id', item.id)
+          .single();
+        if (error || !product || product.stock_quantity < item.quantity) {
+          throw new Error(`Insufficient stock for ${item.name || item.id}: requested ${item.quantity}, available ${product ? product.stock_quantity : 0}`);
+        }
+        return product;
+      });
+      
+      await Promise.all(stockChecks);
+
+      // Create order
+      const { data, error: orderError } = await supabase
+        .from('orders')
+        .insert({
+          customer_name: customer.name,
+          customer_phone: customer.phone,
+          customer_email: customer.email || '',
+          address: customer.address,
+          city: customer.city || '',
+          items: items,
+          total: total,
+          status: status || 'pending',
+        })
+        .select()
+        .single();
+
+      if (orderError) throw orderError;
+
+      // Decrement stock
+      for (const item of items) {
+        await supabase
+          .from('products')
+          .update({ stock_quantity: supabase.raw('stock_quantity - ?', [item.quantity]) })
+          .eq('id', item.id);
+      }
+
+      res.status(201).json(data);
+    } catch (error) {
+      console.error('Error creating order:', error);
+      res.status(400).json({ message: error.message || 'Error creating order' });
+    }
   });
 
-  // Update an order status
-  router.put('/:id', async (req, res) => {
-    const { error } = await supabase.from('orders').update({ status: req.body.status }).eq('id', req.params.id);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ message: 'Order updated' });
+  // GET all orders (admin only)
+  router.get('/', authenticateToken, isAdmin, async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*') // Correctly select the items JSONB column
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      res.status(500).json({ message: 'Error fetching orders', error: error.message });
+    }
   });
 
-  // Route to delete an order
-  router.delete('/:id', async (req, res) => {
+  // PATCH to update order status (admin only)
+  router.patch('/:id/status', authenticateToken, isAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({ message: 'Status is required' });
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .update({ status })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      res.json(data);
+    } catch (error) {
+      console.error(`Error updating status for order ${id}:`, error);
+      res.status(500).json({ message: 'Error updating order status', error: error.message });
+    }
+  });
+
+  // DELETE an order (admin only)
+  router.delete('/:id', authenticateToken, isAdmin, async (req, res) => {
     const { id } = req.params;
 
     try {
-      // First, delete related order_items
-      const { error: deleteItemsError } = await supabase
-        .from('order_items')
-        .delete()
-        .eq('order_id', id);
+      // This is the correct logic, as there is no separate order_items table being used.
+      const { error } = await supabase.from('orders').delete().eq('id', id);
 
-      if (deleteItemsError) {
-        // If the order had no items, this might error, but we can proceed
-        console.warn(`Could not delete order_items for order ${id}, proceeding to delete order anyway. Error: ${deleteItemsError.message}`);
-      }
-
-      // Then, delete the order itself
-      const { error: deleteOrderError } = await supabase
-        .from('orders')
-        .delete()
-        .eq('id', id);
-
-      if (deleteOrderError) {
-        throw deleteOrderError;
-      }
+      if (error) throw error;
 
       res.status(200).json({ message: 'Order deleted successfully' });
     } catch (error) {

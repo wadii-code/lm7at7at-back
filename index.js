@@ -21,15 +21,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Import and use routes
 const productRoutes = require('./routes/products')(supabase);
 const collectionRoutes = require('./routes/collections')(supabase);
-const orderRoutes = require('./routes/orders')(supabase);
 const authRoutes = require('./routes/auth')(supabase);
 const reviewRoutes = require('./routes/reviews')(supabase);
+const orderRoutes = require('./routes/orders')(supabase);
 
 app.use('/api/products', productRoutes);
 app.use('/api/collections', collectionRoutes);
-app.use('/api/orders', orderRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/orders', orderRoutes);
 
 app.listen(port, () => {
   console.log(`Backend server is running on http://localhost:${port}`);
